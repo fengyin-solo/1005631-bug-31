@@ -1,9 +1,21 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import {
+  BILLING_KEY,
+  applyRelief,
+  exportBilling,
+  registerPayment,
+  submitAccounting,
+} from '@/api/heatbilling'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
+
+export type RunActionOptions = {
+  operator?: string
+  relief?: number
+}
 
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
@@ -28,7 +40,26 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
-export function runAction(key: string, id: number, action: string): ActionResult {
+export function runAction(key: string, id: number, action: string, options: RunActionOptions = {}): ActionResult {
+  // 热费结算有专门的窗口业务规则（核算守卫、减免重算、负数不受理、办结入客服台账），走领域逻辑。
+  if (key === BILLING_KEY) {
+    const operator = options.operator ?? '收费窗口'
+    if (action === '提交核算') {
+      return submitAccounting(id)
+    }
+    if (action === '登记缴费') {
+      return registerPayment(id, operator)
+    }
+    if (action === '办理减免') {
+      const relief = Number(options.relief)
+      if (!Number.isFinite(relief)) {
+        return { ok: false, message: '请输入有效的减免金额' }
+      }
+      return applyRelief(id, relief, operator)
+    }
+    const meta = moduleMeta(key)
+    return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
+  }
   const meta = moduleMeta(key)
   const target = meta.actionTargets[action]
   if (!target) {
@@ -62,6 +93,10 @@ export function resetModule(key: string): PageResult {
 }
 
 export function exportEntries(key: string): { filename: string; content: string } {
+  // 热费清单走专用导出：列序与页面对齐、应缴金额按结算口径实时重算（减免落库后即最新）。
+  if (key === BILLING_KEY) {
+    return exportBilling()
+  }
   const meta = moduleMeta(key)
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
