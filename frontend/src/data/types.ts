@@ -18,6 +18,10 @@ export type ModuleMeta = {
   actions: string[]
   actionTargets: Record<string, string>
   metrics: string[]
+  // 终态：流转到这些状态后不再计入待处理（默认取状态表最后一个）。
+  terminalStates?: string[]
+  // 由面积、单价等字段结算得出的金额字段：终态落库后由业务服务统一重算。
+  computedAmountField?: string
 }
 
 export type PageResult = {

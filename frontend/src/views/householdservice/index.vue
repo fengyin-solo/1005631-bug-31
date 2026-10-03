@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <h2>入户服务管理</h2>
-        <p class="page-desc">维护入户服务单，围绕服务单号、报修用户、服务内容、受理人做登记、筛选与状态流转。</p>
+        <p class="page-desc">维护入户服务单，围绕服务单号、报修用户、服务内容、受理人做登记、筛选与状态流转；收费窗口办结的减免结果会进入下方待确认清单。</p>
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记入户服务单</button>
@@ -17,6 +17,44 @@
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
     </div>
+
+    <section class="confirm-panel">
+      <header class="confirm-head">
+        <h3>客服台账 · 待确认清单</h3>
+        <span class="page-desc">收费窗口办结（热费减免）后推送，客服核对无误后点「确认办结」。</span>
+      </header>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>服务单号</th>
+            <th>来源结算单</th>
+            <th>报修用户</th>
+            <th>所属小区</th>
+            <th>服务内容</th>
+            <th>处理结果</th>
+            <th>来源窗口</th>
+            <th>办理日期</th>
+            <th>核对</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in pendingRows" :key="String(row.id)">
+            <td>{{ row['服务单号'] }}</td>
+            <td>{{ row['来源单号'] || '—' }}</td>
+            <td>{{ row['报修用户'] }}</td>
+            <td>{{ row['所属小区'] || '—' }}</td>
+            <td>{{ row['服务内容'] }}</td>
+            <td>{{ row['处理结果'] }}</td>
+            <td>{{ row['受理人'] }}</td>
+            <td>{{ row['上门时间'] }}</td>
+            <td><button class="link" type="button" @click="confirmEntry(Number(row.id))">确认办结</button></td>
+          </tr>
+          <tr v-if="!pendingRows.length">
+            <td colspan="9" class="empty-state">待确认清单为空，新的减免办结会自动推送到这里</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
 
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
@@ -79,19 +117,27 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { confirmLedgerEntry, listPendingConfirm } from '@/api/billing-service'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('householdservice')
-const columns = ["服务单号", "报修用户", "服务内容", "受理人", "上门时间", "处理结果", "回访日期", "服务状态"]
+const columns = ["服务单号", "报修用户", "所属小区", "服务内容", "受理人", "上门时间", "处理结果", "回访日期", "服务状态"]
 const actions = ["受理报修", "登记处理", "完成回访"]
-const statuses = ["待受理", "已安排", "已处理", "已回访"]
-const stats = [{"label": "待受理服务单", "value": 0}, {"label": "已处理服务单", "value": 0}, {"label": "待回访服务单", "value": 0}]
+const statuses = ["待受理", "已安排", "待确认", "已处理", "已回访"]
 
 const rows = ref<EntryRow[]>([])
+const pendingRows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+const stats = computed(() => [
+  { label: '待受理服务单', value: rows.value.filter((row) => row.status === '待受理').length },
+  { label: '待确认服务单', value: pendingRows.value.length },
+  { label: '待回访服务单', value: rows.value.filter((row) => row.status === '已处理').length },
+])
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -122,12 +168,24 @@ function runAction(action: string, row: EntryRow) {
   reload()
 }
 
+function confirmEntry(id: number) {
+  errorMessage.value = ''
+  const result = confirmLedgerEntry(id)
+  if (!result.ok) {
+    errorMessage.value = result.message
+    return
+  }
+  reload()
+}
+
 function reload() {
   errorMessage.value = ''
   try {
     const payload = listEntries(meta.key, filters.value)
-    rows.value = payload.items
+    // 待确认清单已在页面顶部专区展示，主表只保留常规台账记录。
+    rows.value = payload.items.filter((row) => String(row.status) !== '待确认')
     total.value = payload.total
+    pendingRows.value = listPendingConfirm()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '入户服务列表读取失败'
   }
@@ -135,3 +193,20 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.confirm-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.confirm-head {
+  margin-bottom: 8px;
+}
+.confirm-head h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+</style>
